@@ -22,3 +22,7 @@
 #define SYS_close  21
 #define SYS_swapread	22
 #define SYS_swapwrite	23
+#define SYS_getnice 666
+#define SYS_setnice 777
+#define SYS_ps 888
+#define SYS_ang  999

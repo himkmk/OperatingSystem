@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "weight.h"
 
 struct {
   struct spinlock lock;
@@ -88,6 +89,11 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+	p->nice_value = 20;
+	p->weight = weight[20];
+	p->runtime = 0;
+	p->vruntime1 = 0;
+	p->vruntime2 = 0;
 
   release(&ptable.lock);
 
@@ -216,7 +222,9 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
-
+	np->runtime = np->parent->runtime;
+	np->vruntime1 = np->parent->vruntime1;
+	np->vruntime2 = np->parent->vruntime2;
   release(&ptable.lock);
 
   return pid;
@@ -320,40 +328,103 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+int
+delta_vruntime(int _delta_runtime, int _weight)
+{
+	//_delta_runtime is millitick
+	return (_delta_runtime*1024)/_weight;
+}
+
 void
 scheduler(void)
 {
-  struct proc *p;
-  struct cpu *c = mycpu();
-  c->proc = 0;
+  	struct proc *p,*p1,*highp,*savehighp;
+  	struct cpu *c = mycpu();
+	int timeslice =0;
+  	c->proc = 0;
+	int totalweight=0;
+	int delta_runtime=0;
+	//int delta_runtime_initial=0;
   
-  for(;;){
-    // Enable interrupts on this processor.
-    sti();
+	for(;;){
+		// Enable interrupts on this processor.
+		sti();
 
-    // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+		// Loop over process table looking for process to run.
+		acquire(&ptable.lock);
+		for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){ //여기 loop 한번 돌때마다 context switching 일어남. 뒤에서 보정해주니까 여기선 어떤 p인지 상관ㄴㄴ.근데 이 루프가 진짜 필요한가..?
+		  	
+			if(p->state != RUNNABLE){continue;}
+			highp = p;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
-    }
-    release(&ptable.lock);
 
+			if(timeslice<=0){
+				totalweight=1; //to refresh total weight
+				for(p1 = ptable.proc; p1 < &ptable.proc[NPROC]; p1++){
+					//choosing process with smallest vruntime
+					if(p1->state == RUNNABLE || p1->state == RUNNING){
+						totalweight+=p1->weight;
+						if( (p1->vruntime1 < highp->vruntime1) || 
+								((p1->vruntime1 == highp->vruntime1) && (p1->vruntime2 < highp->vruntime2)) ) {highp = p1;} // choose process complete! //사실 굳이 highp를 만들어야되나 싶네.
+					}
+				}
+				
+				savehighp=highp;
+				//cprintf("----------->> selected pid: %d",highp->pid);
+				timeslice = (10000*(p->weight))/totalweight; //10 * 1000 milli
+				continue;
+			}
+			timeslice-=1000;
+
+
+
+
+			p=savehighp;
+			
+			// Switch to chosen process.  It is the process's job
+			// to release ptable.lock and then reacquire it
+			// before jumping back to us.
+			
+			if(p->state !=RUNNABLE){continue;}
+			delta_runtime = ticks; // saving time befor running process go to 6 lines below
+
+
+			
+			c->proc = p;
+			switchuvm(p);
+		  	p->state = RUNNING;
+			swtch(&(c->scheduler), p->context);
+			switchkvm(); 					// <--Process is done running for now. It should have changed its p->state before coming back.
+
+
+
+			delta_runtime = ticks - delta_runtime; //this is the actual runtime in ticks metric
+			p->vruntime2 += (delta_runtime*1024*1000)/p->weight;
+			p->runtime += 1000*delta_runtime; //mult 1000 to change into milli ticks, then assign to p->runtime.
+			
+			//cprintf("pid %d -- rtim: %d --- vrtime: %d\n",p->pid,p->runtime,p->vruntime2);
+			//considering vruntime overflow
+			//   vruntime
+			// = [ ----- vruntime1 ------- | -----vruntime2------- ]
+			if(p->vruntime2>=1000000000){p->vruntime1 +=1;p->vruntime2-=1000000000;}
+			
+			
+			
+
+			//cprintf("pid:%d ---- add vruntime: %d ------- add runtime: %d\n",p->pid,(delta_runtime*1024*1000)/p->weight,1000*delta_runtime);
+			//cprintf("nicevalue:%d ---- weight:%d\n\n\n",p->nice_value,p->weight);
+			
+			
+			
+			c->proc = 0;
+			
+		}
+		
+    	release(&ptable.lock);
   }
+
 }
 
 // Enter scheduler.  Must hold only ptable.lock
@@ -380,6 +451,7 @@ sched(void)
   intena = mycpu()->intena;
   swtch(&p->context, mycpu()->scheduler);
   mycpu()->intena = intena;
+	//panic zombie exit 를 막으려면 이 함수는 절대 끝나면 안되는건가..? exit()을 보면 그런듯..?
 }
 
 // Give up the CPU for one scheduling round.
@@ -459,10 +531,32 @@ static void
 wakeup1(void *chan)
 {
   struct proc *p;
+	struct proc *min_p;
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
-      p->state = RUNNABLE;
+
+  	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+	    	if(p->state == SLEEPING && p->chan == chan){
+	      		p->state = RUNNABLE;
+
+		min_p = ptable.proc;
+		for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+			if(p->state != RUNNABLE && p->state != RUNNING){continue;}
+			
+			
+			if((p->vruntime1 < min_p->vruntime1) || (   (p->vruntime1==min_p->vruntime1)&&(p->vruntime2 < min_p->vruntime2) ))
+			{//if p-vruntime < minvp -vruntime
+				min_p->vruntime1 = p->vruntime1;
+				min_p->vruntime2 = p->vruntime2;
+			}
+		}
+		//cprintf("wakeup123\n");
+		//if min_p->vruntime is 1,000,000,000   (즉, vrtime1 = 1, vrtime2 = 0일때)
+		if((min_p->vruntime1 == 1) && (min_p->vruntime2==0)){min_p->vruntime1 =0; min_p->vruntime2=999999999;}
+		//vruntime!=0 이면 vrutime-=1
+		else if( (min_p->vruntime1!=0) && (min_p->vruntime2!=0) ){min_p->vruntime2 -=1;}
+
+		}
+	}
 }
 
 // Wake up all processes sleeping on chan.
@@ -532,4 +626,173 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+
+int
+csetnice(int pid, int value)
+{
+	struct proc *p;
+	sti();
+	acquire(&ptable.lock);
+	
+
+	if(value<0 || value >39){release(&ptable.lock);return -1;}
+	for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+		if(p->pid == pid){//cprintf("set nice pid = %d  into nicevalue->%d\n",pid,value);
+		p->nice_value = value;
+		p->weight = weight[value];
+		release(&ptable.lock);
+		return 0;}
+		//break;
+	}
+	
+	//cprintf("set nice fail... pid=%d, value=%d\n",pid,value);
+	release(&ptable.lock);
+	return -1;
+
+}
+
+int
+cgetnice(int pid)
+{
+	struct proc *p;
+	sti();
+	acquire(&ptable.lock);
+
+	for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+		if(p->pid == pid){release(&ptable.lock);return p->nice_value;}
+	}
+	
+	release(&ptable.lock);
+	return -1;
+
+}
+
+//printing process state
+int
+cps(int pid)
+{
+	struct proc *p;
+	//struct proc *p_this;	
+
+	sti();
+	acquire(&ptable.lock);
+	
+	//p_this = myproc();	
+	//cprintf("\nthis pid is %d \n\n",p_this->pid); 
+
+	if (pid==0){ //if pid is 0, print all proccess state
+		cprintf("\033[2J\033[1;1H\n");
+		cprintf("\nname\t\tpid\tstate\t\tpriority\truntime/weight\truntime\t\t\tvruntime\t\t\tticks %d\n",ticks*1000);
+		//cprintf("how big? : %d -- %d,%d\n\n",&ptable.proc[640]-ptable.proc,ptable.proc,ptable.proc + 1); NPROC??sdfgsdgdf gdfg
+		for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+			//cprintf("\n in for loop\n");
+			
+			if(p->vruntime1==0){
+			
+				if(p->state == SLEEPING)
+					    // cprintf("name \t pid \t state \t\t priority \t runtime/weight \t runtime \t\t vruntime \t\t ticks %d\n",ticks);
+					{cprintf("%s\t\t%d\tSLEEPING\t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+				else if(p->state == RUNNING)
+					{cprintf("%s\t\t%d\tRUNNING \t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+				else if(p->state == RUNNABLE)
+					{cprintf("%s\t\t%d\tRUNNABLE\t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+				else if(p->state == EMBRYO)
+					{cprintf("%s\t\t%d\tEMBRYO  \t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+				else if(p->state == ZOMBIE)
+					{cprintf("%s\t\t%d\tZOMBIE  \t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}			
+			}
+			else{	
+				
+					if(p->state == SLEEPING)
+					  // cprintf("name \t pid \t state \t\t priority \t runtime/weight \t runtime \t\t vruntime \t\t ticks %d\n",ticks);
+					{cprintf("%s\t\t%d\tSLEEPING\t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+				else if(p->state == RUNNING)
+					{cprintf("%s\t\t%d\tRUNNING \t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+				else if(p->state == RUNNABLE)
+					{cprintf("%s\t\t%d\tRUNNABLE\t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+				else if(p->state == EMBRYO)
+					{cprintf("%s\t\t%d\tEMBRYO  \t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+				else if(p->state == ZOMBIE)
+					{cprintf("%s\t\t%d\tZOMBIE  \t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+					p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}			
+			}
+	
+		}
+		cprintf("\n");
+	}
+	
+	
+	else{  //if pid is not 0, print only the specific process
+		cprintf("name\t\tpid\tstate\t\tpriority\truntime/weight\truntime\t\t\tvruntime\t\t\tticks %d\n",ticks*1000);
+		for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+			if(p->pid == pid){
+			
+			
+			
+			
+				if(p->vruntime1 ==0){
+					if(p->state == SLEEPING)
+						  // cprintf("name \t pid \t state \t\t priority \t runtime/weight \t runtime \t\t vruntime \t\t ticks %d\n",ticks);
+						{cprintf("%s\t\t%d\tSLEEPING\t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+					else if(p->state == RUNNING)
+						{cprintf("%s\t\t%d\tRUNNING \t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+					else if(p->state == RUNNABLE)
+						{cprintf("%s\t\t%d\tRUNNABLE\t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+					else if(p->state == EMBRYO)
+						{cprintf("%s\t\t%d\tEMBRYO  \t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}
+					else if(p->state == ZOMBIE)
+						{cprintf("%s\t\t%d\tZOMBIE  \t%d\t\t%d\t\t%d\t\t\t%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime2);}			
+				}	
+					
+					
+					
+				else{
+					if(p->state == SLEEPING)
+						  // cprintf("name \t pid \t state \t\t priority \t runtime/weight \t runtime \t\t vruntime \t\t ticks %d\n",ticks);
+						{cprintf("%s\t\t%d\tSLEEPING\t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+					else if(p->state == RUNNING)
+						{cprintf("%s\t\t%d\tRUNNING \t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+					else if(p->state == RUNNABLE)
+						{cprintf("%s\t\t%d\tRUNNABLE\t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+					else if(p->state == EMBRYO)
+						{cprintf("%s\t\t%d\tEMBRYO  \t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}
+					else if(p->state == ZOMBIE)
+						{cprintf("%s\t\t%d\tZOMBIE  \t%d\t\t%d\t\t%d\t\t\t%d%d\t\t\n",
+						p->name,p->pid,p->nice_value,(p->runtime)/p->weight,p->runtime,p->vruntime1,p->vruntime2);}			
+				}	
+					
+					
+					
+					
+					
+					
+			}
+			//else
+			//	{cprintf("DONT KNOW STATE --> %s \n",p->name);}
+		}
+		cprintf("\n");
+	}
+
+	release(&ptable.lock);
+	return 888;
 }
