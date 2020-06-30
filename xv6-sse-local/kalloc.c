@@ -72,13 +72,16 @@ kfree(char *v)
   r = (struct run*)v;
   r->next = kmem.freelist;
   kmem.freelist = r;
+	call_freelist(1);
+	//cprintf("freemem %d\n",freemem());
   if(kmem.use_lock)
     release(&kmem.lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
-// Returns a pointer that the kernel can use.
+// Returns a pointer that the kernel can use. char* 타입으로 돌려주네
 // Returns 0 if the memory cannot be allocated.
+//물리 메모리 페이지 하나를 나한테 주고, 그 곳의 "가상"주소를 돌려주는듯. 이 주소에 V2P(주소) 해야됨.
 char*
 kalloc(void)
 {
@@ -90,7 +93,15 @@ kalloc(void)
   if(r)
     kmem.freelist = r->next;
   if(kmem.use_lock)
-    release(&kmem.lock);
+    {release(&kmem.lock);}
+
+	if( (char*)r > (char*)KERNBASE ){
+		cprintf(" KALLOC!!! OVER KERNBASE!!!\nr: %p, kern: %p\n",r,(char*)KERNBASE);
+	}
+	if( (char*)r < (char*)KERNBASE ){
+		cprintf(" KALLOC!!! UNDER KERNBASE!!!\n\n");
+	}
+    
   return (char*)r;
 }
 

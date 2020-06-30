@@ -10,6 +10,9 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+//글로벌 변수 시ㅣㅣ발
+
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -120,6 +123,20 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int		mmap(uint addr,int length,int prot,int flags,int fd,int offset);
+int		munmap(uint addr);
+int		freemem(void);
+int		pgflt(uint addr);
+
+
+void		call_freelist(int a);
+int 		get_flags(uint addr);
+int 		get_offset(uint addr);
+int 		get_length(uint addr);
+struct file*	get_file(uint addr);
+struct proc * 	get_proc(uint addr);
+int 		check_free(uint addr);
+int 		check_free2(uint addr);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -185,6 +202,10 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+
+int extern_mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
+pde_t * extern_walkpgdir(pde_t *pgdir, const void *va, int alloc);
+
 
 // swap.c
 void swapread(char* ptr, int blkno);

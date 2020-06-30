@@ -89,3 +89,37 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint sys_mmap(void)
+{
+	int addr,length,prot,flags,fd,offset;
+	
+	argint(0,&addr);
+	argint(1,&length);
+	argint(2,&prot);
+	argint(3,&flags);
+	argint(4,&fd);
+	argint(5,&offset);
+	
+	return mmap((uint)addr,length,prot,flags,fd,offset);
+	 
+}
+
+int sys_munmap(void)
+{
+	int addr;
+	argint(0,&addr);
+	return munmap((uint)addr);
+}
+
+int sys_freemem(void)
+{
+	return freemem();
+}
+
+int sys_pgflt(void)
+{
+	int addr;
+	argint(0,&addr);
+	return pgflt((uint)addr);
+}

@@ -22,3 +22,7 @@
 #define SYS_close  21
 #define SYS_swapread	22
 #define SYS_swapwrite	23
+#define SYS_mmap 101
+#define SYS_munmap 102
+#define SYS_freemem 103
+#define SYS_pgflt 104

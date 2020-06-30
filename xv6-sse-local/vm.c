@@ -33,7 +33,7 @@ seginit(void)
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page table pages.
 static pte_t *
-walkpgdir(pde_t *pgdir, const void *va, int alloc)
+walkpgdir(pde_t *pgdir, const void *va, int alloc) //alloc이 set되어있으면 페이지 할당해줌.
 {
   pde_t *pde;
   pte_t *pgtab;
@@ -54,15 +54,18 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
   return &pgtab[PTX(va)];
 }
 
+pte_t * extern_walkpgdir(pde_t *pgdir, const void *va, int alloc)
+{
+	return walkpgdir(pgdir,va,alloc);
+}
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned.
 static int
-mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)//perm -> PTE_P, PTE_W, PTE_U 이런거 말하는듯 PTE_P는 내가 안넣는것같은디 아래서 알아서 넣어주네.
 {
   char *a, *last;
   pte_t *pte;
-
   a = (char*)PGROUNDDOWN((uint)va);
   last = (char*)PGROUNDDOWN(((uint)va) + size - 1);
   for(;;){
@@ -79,6 +82,10 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
   return 0;
 }
 
+int extern_mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+{
+	return mappages(pgdir,va,size,pa,perm);
+}
 // There is one page table per process, plus one that's used when
 // a CPU is not running any process (kpgdir). The kernel uses the
 // current process's page table during system calls and interrupts;

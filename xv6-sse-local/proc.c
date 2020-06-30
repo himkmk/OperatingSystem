@@ -6,6 +6,9 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct {
   struct spinlock lock;
@@ -13,6 +16,156 @@ struct {
 } ptable;
 
 static struct proc *initproc;
+
+/////////////////////////FREELISTNUM
+int FREELISTNUM =0;
+
+void call_freelist(int a)
+{
+	FREELISTNUM+=a;
+}
+/////////////////////////mmap_area definition
+struct mmap_area{
+	struct file *f;
+	uint addr;
+	int length;
+	int offset;
+	int prot;
+	int flags;
+	struct proc *p;
+};
+
+struct mmap_area mmap_area_list[64];
+int MMAP_FIRST_RUN = 1;
+
+void mmap_area_init()
+{
+	for(int i=0;i<64;i++){
+		mmap_area_list[i].addr=111;//addr=111 means its free
+		mmap_area_list[i].length=0;
+		mmap_area_list[i].f=0;
+	}
+}
+
+int check_free(uint address)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr!= 111){
+			if(mmap_area_list[i].addr <= address && address <= mmap_area_list[i].addr+mmap_area_list[i].length){
+			 return mmap_area_list[i].addr;
+			}
+		}
+	}
+	
+	return 1;
+}
+
+int check_free2(uint address)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr!= 111){
+			if(mmap_area_list[i].addr==address){
+			 return 0;
+			}
+		}
+	}
+	
+	return 1;
+}
+
+void set_mmap_area(int fd, uint addr, int length, int offset, int prot, int flags, struct proc *p)
+{
+
+	struct file *f = 0;
+	if (fd==-1){f=0;}
+	else f = p->ofile[fd];
+	
+
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==111){
+			
+			mmap_area_list[i].f = f;
+			mmap_area_list[i].addr = addr;
+			mmap_area_list[i].length = length;
+			mmap_area_list[i].offset = offset;
+			mmap_area_list[i].prot = prot;
+			mmap_area_list[i].flags = flags;
+			mmap_area_list[i].p = p;	
+			
+			return;
+		}
+	}
+}
+
+void free_mmap_area(uint addr)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==addr){
+			mmap_area_list[i].addr=111;
+			mmap_area_list[i].length=0;
+			return;
+		}
+	}
+}
+
+struct proc * get_proc(uint addr)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==addr){
+			return mmap_area_list[i].p;
+		}
+	}
+	
+	return 0;
+}
+
+
+
+int get_length(uint addr)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==addr){
+			return mmap_area_list[i].length;
+		}
+	}
+	
+	return -1;
+}
+
+int get_flags(uint addr)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==addr){
+			return mmap_area_list[i].flags;
+		}
+	}
+	
+	return -1;
+}
+
+int get_offset(uint addr)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==addr){
+			return mmap_area_list[i].offset;
+		}
+	}
+	
+	return -1;
+}
+
+
+struct file* get_file(uint addr)
+{
+	for(int i=0;i<64;i++){
+		if(mmap_area_list[i].addr==addr){
+			return mmap_area_list[i].f;
+		}
+	}
+	
+	return 0;
+}
+////////////////////until here
 
 int nextpid = 1;
 extern void forkret(void);
@@ -532,4 +685,199 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+
+int mmap(uint addr,int length,int prot,int flags,int fd,int offset)
+{
+//cprintf("MMAP CALLED!\n");
+//필요한 함수들...
+	/*
+	
+	kalloc() -> 그냥 페이지 하나 자동으로 할당해주고 그 부분의 가상주소 리턴.
+	PGROUNDUP((uint)vstart) 이걸로 페이지 단위로 반올림
+	kfree 써야 fd안주어졌을떄 하는거 하는듯. 아니다 freerange쓰는건가..? kalloc가보자
+	mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+	readi(struct inode *ip, char *dst, uint off, uint n) 
+	writei(struct inode *ip, char *src, uint off, uint n)   
+
+	*/
+	
+//변수들 선언
+
+	
+	struct proc *curproc = myproc();
+	char* addr_tmp=0;
+	pde_t *pagedir = curproc->pgdir;
+	
+	int ANONYMOUS=0;
+	int AVAILABLE=0;
+	if(MMAP_FIRST_RUN){
+		mmap_area_init();
+		MMAP_FIRST_RUN=0;
+	}
+//예외처리	
+	//addr	
+	//addr=0인경우 처리했음.
+	
+	
+	//length
+	length=PGROUNDUP((uint)length); //page align맞추는용도
+	//prot
+	
+	//flags
+	if(flags&MAP_FIXED && check_free(addr+MMAP_BASE)!=1) {
+		cprintf("MMAP with MAP_FIXED fail...memory not available...\n");
+		return 0;
+	}
+
+	//fd
+	if((fd==-1) && ((flags&MAP_ANONYMOUS)!=0)) ANONYMOUS=1; 
+	else if((fd==-1) || ((flags&MAP_ANONYMOUS)!=0))return 0;
+	
+	//offset
+
+
+
+//구현부             //perm -> PTE_P, PTE_W, PTE_U 이런거 말하는듯 PTE_P는 내가 안넣는것같은디 아래서 알아서 넣어주네.
+	
+	//주소 찾는중
+	if(addr==0)
+	{//cprintf("inside if--\n");
+		for (int i=MMAP_BASE;i<MMAP_BASE+PGSIZE*1024;i+=PGSIZE){//페이지전체를돌며
+			//cprintf("inside i loop--\n");
+			for (int j=0;j<length;j+=PGSIZE){ //파일 사이즈(PGROUNDUP(curproc->ofile[fd]->ip->size)만한 공간이 있나 찾는거임. ㄴㄴ 길이줬자너 그거 써야지
+				//cprintf("inside j loop--\n");
+				if(check_free((uint)(i+j))!=1){
+					//cprintf("PAGE NOT AVAILABLE!!!!!!!!!!!!!!!!!!!!!!\n\n"); //만약 문제가 있으면 다시 i 루프로 돌아가서 또 찾자 이거지.
+					i+= (j-PGSIZE > 0 ? j-PGSIZE : 0);//그떄까지 모든 i에 대해 불가능하니까 쩜프!
+					AVAILABLE=0;
+					break;
+				}
+				AVAILABLE=1;				
+			}
+			if(AVAILABLE==1){addr = i;break;} //만약 AVAILABLE==1상태로 j루프를 탈출했다면 충분한 사이즈가 있는것. 그래서 현재 i값으로 addr지정.
+		}
+	}
+	else{addr+=MMAP_BASE;}
+	//void set_mmap_area(struct file *f, uint addr, int length, int offset, int prot, int flags, struct proc *p)
+	set_mmap_area(fd,(uint)addr,length,offset,prot,flags,curproc);
+	//cprintf("addr---------> %p\n\n",addr);
+	
+	
+	//페이지 할당중...
+	for(int i=addr; i<addr+length; i+=PGSIZE/*4096*/){ //이거 돌면서도 문제생기면 튕기게 해야지.
+		if(!(flags&MAP_POPULATE)) return (int)addr;;
+		addr_tmp = kalloc();//물리 메모리 할당 됐고, 해당하는 가상주소를 리턴값으로 받았지.
+		if(extern_mappages(pagedir,(void *)i,PGSIZE,V2P(addr_tmp),PTE_U|PTE_W|PTE_P)!=0){cprintf("mappages fail!\n");return 0;} //flag가 그 인풋으로 받은 flag가 맞나?
+		//cprintf("extern_mappages running!\n");
+	}
+
+	//페이지에 파일 올리는중...
+	call_freelist(-(length)/PGSIZE);
+	if(!ANONYMOUS){
+		//cprintf("NON ANONYMOUS\n");
+		acquiresleep(&(curproc->ofile[fd]->ip)->lock);
+		readi(curproc->ofile[fd]->ip,(char*)addr,offset,length);
+		releasesleep(&(curproc->ofile[fd]->ip)->lock);}
+	else{//cprintf("ANONYMOUS!\n");
+		for (int i = 0; i < length; i++) 
+		*((char*)addr+i)=0;
+	}
+	//cprintf("%s",(char*)addr);
+	//cprintf("inside proc.c / mmap \n");
+	return (int)addr;
+}
+
+int munmap(uint addr)
+{
+	if (check_free2(addr)) return -1;
+	call_freelist(((get_length(addr))/PGSIZE));
+	free_mmap_area(addr);
+	//cprintf("111\n");
+	
+	for(int i=addr;i<addr+get_length(addr);i+=PGSIZE){
+		kfree((char*)i);
+		call_freelist(-1);
+	}
+	
+	//cprintf("111\n");
+	
+	return 1;
+}
+
+int freemem()
+{
+	int tmp=FREELISTNUM;
+	return tmp;
+}
+
+int pgflt(uint addr)
+{
+
+	struct proc *proc = get_proc(addr);
+		int flags = get_flags(addr); flags+=1;flags-=1;
+		int offset = get_offset(addr);
+		int length = get_length(addr);
+		struct file* file = get_file(addr);
+		pde_t *pagedir = proc->pgdir;
+		
+		char* addr_tmp=kalloc();
+	//애초에 va도 할당이 안된 경우. 혹은 되었지만 첫번째 페이지 넘어간 경우.
+		if(check_free2(addr)){
+			
+
+			if(check_free(addr)!=1){
+
+				call_freelist(-1);
+				extern_mappages(get_proc(check_free(addr))->pgdir,(void *)addr,PGSIZE,V2P(addr_tmp),PTE_U|PTE_W|PTE_P);
+				if(get_file(check_free(addr))==0){
+					//ANONYMOUS
+					for (int i = addr; i < addr+PGSIZE; i++) 
+						*((char*)addr+i)=0;
+				}
+				else{
+					//NON ANONYMOUS
+					acquiresleep(&(get_file(check_free(addr))->ip)->lock);
+					readi(get_file(check_free(addr))->ip,(char*)addr,offset+PGSIZE,PGSIZE);
+					releasesleep(&(get_file(check_free(addr))->ip)->lock);
+				}
+				return 1;
+
+			}
+
+
+
+			call_freelist(-1);
+			extern_mappages(myproc()->pgdir,(void *)addr,PGSIZE,V2P(addr_tmp),PTE_U|PTE_W|PTE_P);
+			for (int i = 0; i < PGSIZE; i++) 
+					*((char*)addr+i)=0;
+			return -1;
+		}
+		
+
+		//va가 할당된 첫페이지이지만, 물리 메모리 매핑 안해준 경우.
+
+			call_freelist(-1);
+		/* 1 */ extern_mappages(pagedir,(void *)addr,PGSIZE,V2P(addr_tmp),PTE_U|PTE_W|PTE_P);
+		
+		/* 2 */ 
+				if( file!=0 ){
+					acquiresleep(&(file->ip)->lock);
+					readi(file->ip,(char*)addr,offset,PGSIZE);
+					releasesleep(&(file->ip)->lock);}
+					
+				else{
+					for (int i = 0; i < length; i++) 
+					*((char*)addr+i)=0;
+				}
+	
+
+		//cprintf("exit fault");
+		return 1;
+
+
+
+
+	return 1;
 }

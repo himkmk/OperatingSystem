@@ -25,6 +25,10 @@ int sleep(int);
 int uptime(void);
 int swapread(const char*, int);
 int swapwrite(const char*, int);
+int mmap(uint addr, int length, int prot, int flags, int fd, int offset);
+int munmap(uint addr);
+int freemem();
+int pgflt(uint addr);
 
 // ulib.c
 int stat(const char*, struct stat*);

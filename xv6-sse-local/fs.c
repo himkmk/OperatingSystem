@@ -345,7 +345,7 @@ iput(struct inode *ip)
       ip->valid = 0;
     }
   }
-  releasesleep(&ip->lock);
+  releasesleep(&ip->lock);//
 
   acquire(&icache.lock);
   ip->ref--;
@@ -449,7 +449,7 @@ stati(struct inode *ip, struct stat *st)
 
 //PAGEBREAK!
 // Read data from inode.
-// Caller must hold ip->lock.
+// Caller must hold ip->lock.             acquire(&ip->lock); release(&ip->lock) 이렇게 쓰는건듯
 int
 readi(struct inode *ip, char *dst, uint off, uint n)
 {
