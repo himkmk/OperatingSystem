@@ -130,10 +130,11 @@ ideintr(void)
   release(&idelock);
 }
 
-//PAGEBREAK!
 // Sync buf with disk.
 // If B_DIRTY is set, write buf to disk, clear B_DIRTY, set B_VALID.
 // Else if B_VALID is not set, read buf from disk, set B_VALID.
+
+extern int SWAPPED;
 void
 iderw(struct buf *b)
 {
@@ -145,8 +146,14 @@ iderw(struct buf *b)
     panic("iderw: nothing to do");
   if(b->dev != 0 && !havedisk1)
     panic("iderw: ide disk 1 not present");
-
+	
+	
+																																										//if(SWAPPED==1) cprintf("iderw 0!\n");
+  
+  
   acquire(&idelock);  //DOC:acquire-lock
+
+
 
   // Append b to idequeue.
   b->qnext = 0;
@@ -154,14 +161,29 @@ iderw(struct buf *b)
     ;
   *pp = b;
 
+
+
+
   // Start disk if necessary.
   if(idequeue == b)
+  {
+		 
+  
+  
     idestart(b);
-
+	}
+	
+	
+  
+  
+  	
   // Wait for request to finish.
   while((b->flags & (B_VALID|B_DIRTY)) != B_VALID){
-    sleep(b, &idelock);
+    sleep(b, &idelock);    
   }
+
+
+
 
 
   release(&idelock);

@@ -15,5 +15,4 @@ picinit(void)
   outb(IO_PIC2+1, 0xFF);
 }
 
-//PAGEBREAK!
 // Blank page.

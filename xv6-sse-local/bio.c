@@ -42,7 +42,6 @@ binit(void)
 
   initlock(&bcache.lock, "bcache");
 
-//PAGEBREAK!
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
   bcache.head.next = &bcache.head;
@@ -74,7 +73,6 @@ bget(uint dev, uint blockno)
       return b;
     }
   }
-
   // Not cached; recycle an unused buffer.
   // Even if refcnt==0, B_DIRTY indicates a buffer is in use
   // because log.c has modified it but not yet committed it.
@@ -84,11 +82,16 @@ bget(uint dev, uint blockno)
       b->blockno = blockno;
       b->flags = 0;
       b->refcnt = 1;
-      release(&bcache.lock);
-      acquiresleep(&b->lock);
+      
+      
+			release(&bcache.lock);
+			acquiresleep(&b->lock);
+
       return b;
     }
   }
+  
+
   panic("bget: no buffers");
 }
 
@@ -97,9 +100,9 @@ struct buf*
 bread(uint dev, uint blockno)
 {
   struct buf *b;
-
+ 
   b = bget(dev, blockno);
-  if((b->flags & B_VALID) == 0) {
+  if((b->flags & B_VALID) == 0) {  	
     iderw(b);
   }
   return b;
@@ -139,6 +142,5 @@ brelse(struct buf *b)
   
   release(&bcache.lock);
 }
-//PAGEBREAK!
 // Blank page.
 

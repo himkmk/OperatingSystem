@@ -110,6 +110,7 @@ write_head(void)
   }
   bwrite(buf);
   brelse(buf);
+  cprintf("write head------------------------------\n");
 }
 
 static void

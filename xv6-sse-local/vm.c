@@ -33,7 +33,7 @@ seginit(void)
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page table pages.
 static pte_t *
-walkpgdir(pde_t *pgdir, const void *va, int alloc)
+walkpgdir(pde_t *pgdir, const void *va, int alloc) //alloc이 set되어있으면 페이지 할당해줌.
 {
   pde_t *pde;
   pte_t *pgtab;
@@ -54,23 +54,39 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
   return &pgtab[PTX(va)];
 }
 
+pte_t * extern_walkpgdir(pde_t *pgdir, const void *va, int alloc)
+{
+	return walkpgdir(pgdir,va,alloc);
+}
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned.
 static int
-mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+mappages(pde_t *pgdir, void *uva, uint size, uint pa, int perm)//perm -> PTE_P, PTE_W, PTE_U 이런거 말하는듯 PTE_P는 내가 안넣는것같은디 아래서 알아서 넣어주네.
 {
+
+	
   char *a, *last;
   pte_t *pte;
-
-  a = (char*)PGROUNDDOWN((uint)va);
-  last = (char*)PGROUNDDOWN(((uint)va) + size - 1);
+  a = (char*)PGROUNDDOWN((uint)uva);
+  last = (char*)PGROUNDDOWN(((uint)uva) + size - 1);
+  
   for(;;){
+  
     if((pte = walkpgdir(pgdir, a, 1)) == 0)
       return -1;
     if(*pte & PTE_P)
       panic("remap");
     *pte = pa | perm | PTE_P;
+    
+    
+    if((uint)a<KERNBASE)
+    {	
+    	//uva 넣는중..
+    	;//add_lrulist(pgdir,a);
+    	
+    }
+    
     if(a == last)
       break;
     a += PGSIZE;
@@ -79,6 +95,11 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
   return 0;
 }
 
+int extern_mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+{
+	
+	return mappages(pgdir,va,size,pa,perm);
+}
 // There is one page table per process, plus one that's used when
 // a CPU is not running any process (kpgdir). The kernel uses the
 // current process's page table during system calls and interrupts;
@@ -221,6 +242,8 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
 int
 allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 {
+  cprintf("========pg: %x alloc %x ----> %x\n",pgdir,oldsz,newsz);
+
   char *mem;
   uint a;
 
@@ -230,7 +253,11 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     return oldsz;
 
   a = PGROUNDUP(oldsz);
+ 	
   for(; a < newsz; a += PGSIZE){
+
+  	add_lrulist(pgdir,(char*) a);
+    
     mem = kalloc();
     if(mem == 0){
       cprintf("allocuvm out of memory\n");
@@ -255,6 +282,8 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 int
 deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 {
+  cprintf("========pg: %x delloc %x ----> %x\n",pgdir,oldsz,newsz);
+
   pte_t *pte;
   uint a, pa;
 
@@ -263,6 +292,10 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 
   a = PGROUNDUP(newsz);
   for(; a  < oldsz; a += PGSIZE){
+  	
+  	//*********lru리스트에서도 삭제해주기***********//
+  	check_lrulist(pgdir,(char*)a);
+    
     pte = walkpgdir(pgdir, (char*)a, 0);
     if(!pte)
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
@@ -275,6 +308,7 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       *pte = 0;
     }
   }
+ 	print_pages();
   return newsz;
 }
 
@@ -325,7 +359,7 @@ copyuvm(pde_t *pgdir, uint sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P))
+    if(!(*pte & PTE_P) && (*pte>>12==0))
       panic("copyuvm: page not present");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);

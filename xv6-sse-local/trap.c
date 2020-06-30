@@ -32,7 +32,6 @@ idtinit(void)
   lidt(idt, sizeof(idt));
 }
 
-//PAGEBREAK: 41
 void
 trap(struct trapframe *tf)
 {
@@ -47,6 +46,29 @@ trap(struct trapframe *tf)
   }
 
   switch(tf->trapno){
+  case T_PGFLT:
+  { //***********  SWAP READ  *************//
+
+
+  	char* vaddr = (char*)rcr2();
+  	pde_t * pgdir = myproc()->pgdir;
+  	int blkno = (*extern_walkpgdir(pgdir,vaddr,0)) >> 12;
+  	char* new_kva = kalloc();
+  	
+  	cprintf("PAGEFAULT!!!!  %x, %x\n",vaddr,pgdir);
+  	// PTE_P 다시 세우기 
+  	*extern_walkpgdir(pgdir,vaddr,0)|= PTE_P;
+  	
+  	//recovering PTE (instead of mappages)
+  	*extern_walkpgdir(pgdir,vaddr,0)|= V2P(new_kva);
+		swapread(vaddr, blkno);
+  	
+  	
+  	//swapread 언제넣지?
+  	
+  	
+  	break;
+  }
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
       acquire(&tickslock);
@@ -82,7 +104,6 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
 
-  //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
       // In kernel, it must be our mistake.

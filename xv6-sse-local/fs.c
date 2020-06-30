@@ -22,11 +22,30 @@
 #include "file.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+
+
+
+int SWAPPED = 0;
+
+
+
+
+
+
+
+
+
+
+
+
+
 static void itrunc(struct inode*);
 // there should be one superblock per disk device, but we run with
 // only one device
 struct superblock sb; 
-
+int nr_sectors_read;
+int nr_sectors_write;
 // Read the super block.
 void
 readsb(int dev, struct superblock *sb)
@@ -188,7 +207,6 @@ iinit(int dev)
 
 static struct inode* iget(uint dev, uint inum);
 
-//PAGEBREAK!
 // Allocate an inode on device dev.
 // Mark it as allocated by  giving it type type.
 // Returns an unlocked but allocated and referenced inode.
@@ -360,7 +378,6 @@ iunlockput(struct inode *ip)
   iput(ip);
 }
 
-//PAGEBREAK!
 // Inode content
 //
 // The content (data) associated with each inode is stored
@@ -447,7 +464,6 @@ stati(struct inode *ip, struct stat *st)
   st->size = ip->size;
 }
 
-//PAGEBREAK!
 // Read data from inode.
 // Caller must hold ip->lock.
 int
@@ -476,7 +492,6 @@ readi(struct inode *ip, char *dst, uint off, uint n)
   return n;
 }
 
-// PAGEBREAK!
 // Write data to inode.
 // Caller must hold ip->lock.
 int
@@ -511,7 +526,6 @@ writei(struct inode *ip, char *src, uint off, uint n)
   return n;
 }
 
-//PAGEBREAK!
 // Directories
 
 int
@@ -578,7 +592,6 @@ dirlink(struct inode *dp, char *name, uint inum)
   return 0;
 }
 
-//PAGEBREAK!
 // Paths
 
 // Copy the next path element from path into name.
@@ -670,37 +683,151 @@ nameiparent(char *path, char *name)
   return namex(path, 1, name);
 }
 
-#define SWAPBASE	500
-#define SWAPMAX		(100000 - SWAPBASE)
+void swapread(char* ptr, int blkno/*4kb단위*/) //1page = 4kb = 8 x 512byte(=1block) --> 그래서 i=1~8.  결국 하나의 페이지만큼 복사하겠다는 거임.
+{//1페이지 = 8블럭.
 
-void swapread(char* ptr, int blkno)
-{
+
+//********************* Variable Declaration *********************
 	struct buf* bp;
 	int i;
 
-	if ( blkno < 0 || blkno >= SWAPMAX )
+//********************* Read-IN data 1page   blkno --> ptr *********************
+	cprintf("swapread blockno: %d\n",blkno);
+	if ( blkno < 0 || blkno >= SWAPMAX/8 )
 		panic("swapread: blkno exceed range");
 
 	for ( i=0; i < 8; ++i ) {
-		bp = bread(0, blkno + SWAPBASE + i);
-		memmove(ptr + i * BSIZE, bp->data, BSIZE);
+		nr_sectors_read++;
+		bp = bread(0, blkno * 8 + SWAPBASE + i);
+		memmove(ptr + i * BSIZE, bp->data, BSIZE); //memmove(dest,src,size) //무슨 근거로 데이터를 옮기는거지? ptr가 물리메모리 할당이 안되어있으면 어쩌려고?
 		brelse(bp);
 	}
 }
 
-void swapwrite(char* ptr, int blkno)
+void swapwrite(char* ptr, int blkno/*4kb단위*/)
 {
+//********************* Variable Declaration *********************
 	struct buf* bp;
 	int i;
+	cprintf("SWAPWRITE!!!!!!!!\n\n\n");
+	SWAPPED=1;
 
-	if ( blkno < 0 || blkno >= SWAPMAX )
+
+//********************* Read-OUT data 1page  FROM: ptr -->TO: blkno  *********************
+	if ( blkno < 0 || blkno >= SWAPMAX/8 )
 		panic("swapread: blkno exceed range");
-
+																																																									//cprintf("swapwrite line 0\n");
 	for ( i=0; i < 8; ++i ) {
-		bp = bread(0, blkno + SWAPBASE + i);
-		memmove(bp->data, ptr + i * BSIZE, BSIZE);
+		nr_sectors_write++;
+																																																									//cprintf("swapwrite line 0.5\n");
+		bp = bread(0, blkno * 8 + SWAPBASE + i); //여기 들어오는 값이  OFFSET인것 같은데?
+																																																									//cprintf("swapwrite line 1\n");
+		/*
+		static int first = 1;
+		if (first==1){
+			initsleeplock(&(bp->lock),"swaplock");
+			cprintf("----------------------------------------lock here\n");
+			first = 0;
+		}*/
+		
+																																																									//cprintf("swapwrite line 2\n");
+																																																									//cprintf("swapwrite line 3\n");
+		
+		
+		
+		
+		
+		//acquiresleep(&(bp->lock));
+		memmove(bp->data, ptr + i * BSIZE, BSIZE);//memmove(dest,src,size)
+		
+																																																									//cprintf("swapwrite line 4\n");
+		//cprintf("holding lock?? --> %d\n",holdingsleep(&bp->lock));
 		bwrite(bp);
+																																																									//cprintf("swapwrite line 5\n");		
+		
 		brelse(bp);
 	}
+	
+//********************* Change PTE value to offset *********************
+
+	//ㄴㄴ 이거 kalloc쪽에서 지워버리기로 결정.
+
+	//PTE 의 앞 20bit가 PPN(PhysPageNum) 그리고 뒤에 12bit가 Flags임.
+	//*ptr = (*ptr & 0x00000FFF) & OFFSET<<12;
+//********************* Change PTE_P to 0 *********************
+	//*ptr = *ptr & !PTE_P;
+	
+	
 }
+
+
+
+
+
+/* 참고사항들
+memset(주소,값,얼마나) --> 이거로 bitmap만들자
+
+kalloc 으로 하나 받아놓고 PTE_U 를 조작해서 못건드리게 만들어버릴까..?
+* 그러면 LRU list 때려박을떄 주소만 가지고 때려박으면 안되고 PTE_U도 검사해야겠네.
+
+
+
+1바이트 구조.
+ | 0 | 1 | 2 | 3 | 4 | 5 | 7 |
+
+   ^
+   |
+ 주소값
+
+
+그니까 n번째 비트를 보려면 n/8 째 바이트에서 n%8번째 비트를 보면 되겠네. (*n번째 의 시작은 0번쨰부터!! 1번째라고 착각 ㄴㄴ)
+ex) 7번째 비트를 보려면, 0번째 바이트에서 7번째 비트.
+    8번째 비트를 보려면, 1번째 바이트에서 0번째 비트.
+  
+그럼 내가 원하는 비트연산을 제대로 하려면 char* 형으로 포인터값 타입캐스팅 ㄱㄱ. 하나의 바이트 내에서 비트를 가져올떄는... 그냥 하드코딩으로 마스킹 해야될듯. 아니면 쉬프팅 하던가.
+
+
+allocuvm 막 이런거 보는것 같은디
+
+ - PTE_U 가 set 되어 있어야만 user가 접근 가능. 즉, user page임. 아마도..?
+ - PTE_P 는 present bit. swap out되면 이걸 0으로 바꿔줘야지.
+ - PTE_A 는 access bit. LRU list만들떄 써야됨.
+
+
+
+<mmu.h> va 있을때 pdx ptx 마스킹 가능.
+#define PDX(va)         (((uint)(va) >> PDXSHIFT) & 0x3FF)   //결과는 10bit짜리.
+#define PTX(va)         (((uint)(va) >> PTXSHIFT) & 0x3FF)
+
+
+
+<vm.c>
+// Return the address of the PTE in page table pgdir
+// that corresponds to virtual address va.  If alloc!=0,
+// create any required page table pages.
+static pte_t * walkpgdir(pde_t *pgdir, const void *va, int alloc)
+{
+	.
+	.
+	.
+	pde = &pgdir[PDX(va)];
+	pgtab = (pte_t*)P2V(PTE_ADDR(*pde)); 
+	.
+	.
+	.
+	.
+	pte = &pgtab[PTX(va)];
+}
+*/
+
+
+
+
+
+
+
+
+
+
+
 

@@ -35,6 +35,7 @@ main(void)
   kinit2(P2V(4*1024*1024), P2V(PHYSTOP)); // must come after startothers()
   userinit();      // first user process
   mpmain();        // finish this processor's setup
+  cprintf("\n\n\n\n\nEND MAIN!!!!!!!!!!!!!!!\n\n\n\n\n");
 }
 
 // Other CPUs jump here from entryother.S.
@@ -107,10 +108,7 @@ pde_t entrypgdir[NPDENTRIES] = {
   [KERNBASE>>PDXSHIFT] = (0) | PTE_P | PTE_W | PTE_PS,
 };
 
-//PAGEBREAK!
 // Blank page.
-//PAGEBREAK!
 // Blank page.
-//PAGEBREAK!
 // Blank page.
 

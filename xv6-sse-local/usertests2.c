@@ -1507,8 +1507,7 @@ sbrktest(void)
       exit();
     }
     if(pid == 0){
-      //printf(stdout, "oops could read %x = %x\n", a, *a);
-      printf(stdout,"gi mo ddi!\n");
+      printf(stdout, "oops could read %x = %x\n", a, *a);
       kill(ppid);
       exit();
     }

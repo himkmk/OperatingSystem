@@ -9,6 +9,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct page;
 
 // bio.c
 void            binit(void);
@@ -52,6 +53,9 @@ struct inode*   nameiparent(char*, char*);
 int             readi(struct inode*, char*, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, char*, uint, uint);
+void swapread(char* ptr, int blkno);
+void swapwrite(char* ptr, int blkno);
+
 
 // ide.c
 void            ideinit(void);
@@ -68,6 +72,32 @@ char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
+
+
+
+struct page* getfree_lruspace();
+void init_lrulist();
+void add_lrulist(pde_t* pgdir,char* vaddr);
+struct page* del_lrulist(struct page* delpage);
+void movehead_lrulist();
+int selectvictim_lrulist();
+void check_lrulist(pde_t *pgdir, char* uva);
+
+int get_bitmap(int n);
+void set_bitmap(int n);
+void clear_bitmap(int n);
+int getfree_bitmap();
+
+void print_pages();
+
+
+
+
+
+
+
+
+
 
 // kbd.c
 void            kbdintr(void);
@@ -101,7 +131,6 @@ void            pipeclose(struct pipe*, int);
 int             piperead(struct pipe*, char*, int);
 int             pipewrite(struct pipe*, char*, int);
 
-//PAGEBREAK: 16
 // proc.c
 int             cpuid(void);
 void            exit(void);
@@ -186,9 +215,13 @@ void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 
-// swap.c
-void swapread(char* ptr, int blkno);
-void swapwrite(char* ptr, int blkno);
+pde_t * extern_walkpgdir(pde_t *pgdir, const void *va, int alloc);
+
+// umalloc.c
+void*malloc(uint nbytes);
+void free(void *ap);
+
+
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
