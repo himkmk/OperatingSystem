@@ -8,6 +8,17 @@
 #include "proc.h"
 
 int
+sys_ang(void)
+{
+  
+  cprintf("ang implementation ! \n\n");
+  cprintf("name\tpid\tstate\tpriority\n");
+
+
+  return 0;
+}
+
+int
 sys_fork(void)
 {
   return fork();
@@ -88,4 +99,35 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+int
+sys_csetnice(void)
+{
+	int pid,value;
+	if(argint(0,&pid)<0){return -1;}
+	if(argint(1,&value)<0){return -1;}
+
+	return csetnice(pid,value);
+}
+
+int
+sys_cgetnice(void)
+{
+	int pid;
+	int nice;
+	if(argint(0,&pid)<0){return -1;}
+
+	nice = cgetnice(pid);
+	return nice;
+}
+
+
+void
+sys_cps(void)
+{
+	int pid;
+	if(argint(0,&pid)<0){return;}
+	cps(pid);
+	return;
 }

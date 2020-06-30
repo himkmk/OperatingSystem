@@ -88,6 +88,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+	p->nice_value = 20;
 
   release(&ptable.lock);
 
@@ -532,4 +533,108 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+
+int
+csetnice(int pid, int value)
+{
+	struct proc *p;
+	sti();
+	acquire(&ptable.lock);
+	
+
+	if(value<0 || value >39){release(&ptable.lock);return -1;}
+	for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+		if(p->pid == pid){p->nice_value = value;release(&ptable.lock);return 0;}
+		break;
+	}
+	
+	release(&ptable.lock);
+	return -1;
+
+}
+
+int
+cgetnice(int pid)
+{
+	struct proc *p;
+	sti();
+	acquire(&ptable.lock);
+
+	for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+		if(p->pid == pid){release(&ptable.lock);return p->nice_value;}
+	}
+	
+	release(&ptable.lock);
+	return -1;
+
+}
+
+//printing process state
+int
+cps(int pid)
+{
+	struct proc *p;
+	struct proc *p_this;
+	int counting =0;	
+
+	sti();
+	acquire(&ptable.lock);
+	
+	p_this = myproc();	
+	cprintf("\nthis pid is %d \n\n",p_this->pid); 
+
+	if (pid==0){ //if pid is 0, print all proccess state
+		cprintf("name \t pid \t state \t\t priority \t\n");
+		//cprintf("how big? : %d -- %d,%d\n\n",&ptable.proc[640]-ptable.proc,ptable.proc,ptable.proc + 1); NPROC??sdfgsdgdf gdfg
+		for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+			//cprintf("\n in for loop\n");
+			if(p->state == SLEEPING)
+				{cprintf("%s \t %d \t SLEEPING \t %d \t\n",p->name,p->pid,p->nice_value);}
+			else if(p->state == RUNNING)
+				{cprintf("%s \t %d \t RUNNING \t %d \t \n",p->name,p->pid,p->nice_value);}
+			else if(p->state == RUNNABLE)
+				{cprintf("%s \t %d \t RUNNABLE \t %d \t \n",p->name,p->pid,p->nice_value);}
+			else if(p->state == EMBRYO)
+				{cprintf("%s \t %d \t EMBRYO \t %d \t \n",p->name,p->pid,p->nice_value);}
+			else if(p->state == ZOMBIE)
+				{cprintf("%s \t %d \t ZOMBIE \t %d \t \n",p->name,p->pid,p->nice_value);}
+			else if(p->state == UNUSED){
+				cprintf("%s \t %d \t UNUSED \t %d \t \n",p->name,p->pid,p->nice_value);
+				++counting;
+				if (counting == 6){
+					cprintf(".\n.\n.\n.\n.\n.\n");
+					counting =0;
+					break;
+				}						
+			}
+
+			//else
+			//	{cprintf("DONT KNOW STATE --> %s \n",p->name);}
+		}
+	}
+	else{  //if pid is not 0, print only the specific process
+		for(p = ptable.proc; p< &ptable.proc[NPROC]; p++){
+			if(p->pid == pid){
+				cprintf("name \t pid \t state \t\t priority \t\n");
+				if(p->state == SLEEPING)
+					{cprintf("%s \t %d \t SLEEPING \t %d \t\n",p->name,p->pid,p->nice_value);}
+				else if(p->state == RUNNING)
+					{cprintf("%s \t %d \t RUNNING \t %d \t \n",p->name,p->pid,p->nice_value);}
+				else if(p->state == RUNNABLE)
+					{cprintf("%s \t %d \t RUNNABLE \t %d \t \n",p->name,p->pid,p->nice_value);}
+				else if(p->state == EMBRYO)
+					{cprintf("%s \t %d \t EMBRYO \t %d \t \n",p->name,p->pid,p->nice_value);}
+				else if(p->state == ZOMBIE)
+					{cprintf("%s \t %d \t ZOMBIE \t %d \t \n",p->name,p->pid,p->nice_value);}
+				else if(p->state == UNUSED)
+					{cprintf("%s \t %d \t UNUSED \t %d \t \n",p->name,p->pid,p->nice_value);}
+				break;
+			}
+		}	
+	}
+
+	release(&ptable.lock);
+	return 888;
 }
