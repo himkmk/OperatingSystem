@@ -56,12 +56,16 @@ bzero(int dev, int bno)
 static uint
 balloc(uint dev)
 {
+	//순수하게 그냥 ㄹㅇ 그냥 찐으로 "블럭할당" 만 해주네.
+	// 이게 어떤 Area에 가는지 등등 같은거 좃도신경안씀
   int b, bi, m;
   struct buf *bp;
 
   bp = 0;
   for(b = 0; b < sb.size; b += BPB){
     bp = bread(dev, BBLOCK(b, sb));
+    //#define BBLOCK(b, sb) (b/BPB + sb.bmapstart)
+    //#define BPB (BSIZE*8)
     for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
       m = 1 << (bi % 8);
       if((bp->data[bi/8] & m) == 0){  // Is block free?
@@ -182,8 +186,16 @@ iinit(int dev)
   readsb(dev, &sb);
   cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d\
  inodestart %d bmap start %d\n", sb.size, sb.nblocks,
-          sb.ninodes, sb.nlog, sb.logstart, sb.inodestart,
-          sb.bmapstart);
+          sb.ninodes, sb.nlog, sb.logstart, sb.inodestart[0],
+          sb.bmapstart[0]);
+          
+  cprintf("inode per block: %d\n",IPB);
+  cprintf("iblock per BG: %d\n",IBPBG);
+  cprintf("--> inodes per BG: %d *%d = %d\n",IBPBG,IPB,IBPBG*IPB);
+  cprintf("bgroup size: %d\n",BGSIZE);
+  cprintf("nbmap per group: %d\n",BBPBG);
+  cprintf("ndatablocks per group: BGSIZE - above = %d\n", (BGSIZE-(BBPBG))- (IBPBG*IPB));
+  cprintf("swap area: %d\n",FSSIZE%BGSIZE);
 }
 
 static struct inode* iget(uint dev, uint inum);
@@ -377,15 +389,23 @@ bmap(struct inode *ip, uint bn)
   struct buf *bp;
 
   if(bn < NDIRECT){
+		//cprintf("here0 -- blkno: %d\n",bn);
     if((addr = ip->addrs[bn]) == 0)
       ip->addrs[bn] = addr = balloc(ip->dev);
     return addr;
   }
-  bn -= NDIRECT;
+  bn -= NDIRECT; 
 
+
+
+
+
+	//Define NINDERECT BSIZE/sizeof(pointer)
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+
+		//cprintf("here1 -- blkno: %d\n",bn);
+    if((addr = ip->addrs[NDIRECT]) == 0)  //addrs[NDIRECT] 는 NDIRECT+1 번째라서, 첫번째 InDirect를 말하는듯. 
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
@@ -396,7 +416,55 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  
+  
+  
+  bn -= NINDIRECT;
+  
+  #define ENTRYNUM (BSIZE/sizeof(uint))
+  #define NDOUBLEINDIRECT (NINDIRECT*NINDIRECT)
+  if(bn< NDOUBLEINDIRECT){
+  	
+		//cprintf("here3 -- blkno: %d\n",bn);
+  	//  inode 에서 Double Indirect 부분 할당 안됐으면 할당해주기.
+  	// 현재 addr는 할당 안됨.
+  	if((addr = ip->addrs[NDIRECT + 1]) == 0)											// 현재 addr는 inode --> nullptr
+  		ip->addrs[NDIRECT + 1] = addr = balloc (ip->dev); 				// 현재 addr는 inode --> 첫째의시작.
+  	
+  	bp = bread(ip->dev, addr);
+  	a = (uint*)bp->data;        
+  	
+  	
+  	
+  	//첫째to둘째 로 가는 매핑 할당해주기.  	
+  	
+  	if((addr = a[bn/ENTRYNUM]) == 0){
+      a[bn/ENTRYNUM] = addr = balloc(ip->dev);                //현재 addr는 첫째[bn/ENTRYNUM]->둘째의 시작.
+      log_write(bp);
+    }
+    brelse(bp);
+    
+   	
+   	
+   	// 둘째to 데이터블럭 매핑 해주기.
+   	
+   	bp = bread(ip->dev,addr);
+   	a = (uint*)bp->data;			
+   	
+   	//cprintf("bn: %d, bn ./. 128:%d \n",bn,bn%128);
+   	if((addr = a[bn%ENTRYNUM]) == 0){
+      //cprintf("in here addr: %d\n",addr);
+      a[bn%ENTRYNUM] = addr = balloc(ip->dev);           //현재 addr는 둘째[bn % ENTRYNUM]->데이터블럭의 시작.
+      log_write(bp);
+    }
+    brelse(bp);
+    
 
+    
+    return addr;
+  }
+	
+	
   panic("bmap: out of range");
 }
 

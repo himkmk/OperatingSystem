@@ -15,25 +15,26 @@
 #define static_assert(a, b) do { switch (0) case 0: case (a): ; } while (0)
 #endif
 
-#define NINODES 200
+//inode per iblock * iblocks per BG * BG per FS = total inodes
+#define NINODES IPB*IBPBG*NBG
 
 // Disk layout:
 // [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
 
 int nbitmap = FSSIZE/(BSIZE*8) + 1;
-int ninodeblocks = NINODES / IPB + 1;
+int ninodeblocks = NINODES / IPB + 1; //개수니까 int나눗셈에서 truncate 되어버리는거 때문에 1 더해주는건가?
 int nlog = LOGSIZE;
 int nmeta;    // Number of meta blocks (boot, sb, nlog, inode, bitmap)
-int nblocks;  // Number of data blocks
+int nblocks;  // Number of data blocks //FSSIZE - nmeta. 그니까 이걸 늘리고 싶으면 FSSIZE를 키우는게 맞는
 
 int fsfd;
 struct superblock sb;
 char zeroes[BSIZE];
 uint freeinode = 1;
 uint freeblock;
+uint freeblock0;
 
-
-void balloc(int);
+void balloc(int,int,int);
 void wsect(uint, void*);
 void winode(uint, struct dinode*);
 void rinode(uint inum, struct dinode *ip);
@@ -72,6 +73,9 @@ main(int argc, char *argv[])
   struct dirent de;
   char buf[BSIZE];
   struct dinode din;
+  int surplus_space_divBy32 = FSSIZE%BGSIZE;
+	
+	//dirent de 는 디렉토리 엔트리인듯.
 
 
   static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
@@ -91,44 +95,60 @@ main(int argc, char *argv[])
   }
 
   // 1 fs block = 1 disk sector
-  nmeta = 2 + nlog + ninodeblocks + nbitmap;
+  nmeta = 2 + nlog + IBPBG + BBPBG;
+  nmeta += surplus_space_divBy32;
   nblocks = FSSIZE - nmeta;
-
+ 
+ 
+ 
+ 	//sb = super block !!!
   sb.size = xint(FSSIZE);
   sb.nblocks = xint(nblocks);
   sb.ninodes = xint(NINODES);
   sb.nlog = xint(nlog);
   sb.logstart = xint(2);
-  sb.inodestart = xint(2+nlog);
-  sb.bmapstart = xint(2+nlog+ninodeblocks);
-
+ 
+  for (int blkgroup =0; blkgroup<FSSIZE; blkgroup+=BGSIZE){
+  	int i = blkgroup / BGSIZE;
+  	sb.inodestart[i] = xint(2+nlog + blkgroup);
+  	sb.bmapstart[i] = xint(2+nlog+ (IBPBG) + blkgroup);
+	}
+ 
+ 	
   printf("nmeta %d (boot, super, log blocks %u inode blocks %u, bitmap blocks %u) blocks %d total %d\n",
-         nmeta, nlog, ninodeblocks, nbitmap, nblocks, FSSIZE);
-
+         2+nlog+ninodeblocks+nbitmap, nlog, ninodeblocks, nbitmap, nblocks, FSSIZE);
+         
+	printf("BGSIZE!!  %d\n",BGSIZE);
   freeblock = nmeta;     // the first free block that we can allocate
 
+
+	//일단 전체 FS을 0으로 밀어버리기
   for(i = 0; i < FSSIZE; i++)
     wsect(i, zeroes);
 
-  memset(buf, 0, sizeof(buf));
-  memmove(buf, &sb, sizeof(sb));
-  wsect(1, buf);
+	
+	//char buf[BSIZE]
+	//memset(start_location(pointer),value,size)
+  memset(buf, 0, sizeof(buf));//buffer 를 0으로 밀어버림.
+  memmove(buf, &sb, sizeof(sb));//0으로 밀어버린 버퍼에 sb를 때려박기
+  wsect(1, buf); //1번 섹터에 버퍼내용 쓰기. 1번이면 superblock이겠지.
 
-  rootino = ialloc(T_DIR);
+  rootino = ialloc(T_DIR); //inode 하나를 만들어서 할당해주는듯? 코드보면 free inode 개수 한개 늘림.
   assert(rootino == ROOTINO);
 
-  bzero(&de, sizeof(de));
-  de.inum = xshort(rootino);
-  strcpy(de.name, ".");
-  iappend(rootino, &de, sizeof(de));
+  bzero(&de, sizeof(de)); //새로운 Directory Entry 를 만들어서 (사실 전역변수로 선언되어 있고 그냥 0으로 밀어버린거임)
+  de.inum = xshort(rootino); //어디에 소속된 directory인지 알려주려고 inode 번호 준ㄷㅅ
+  strcpy(de.name, "."); // "." 자기 자신 추가
+  iappend(rootino, &de, sizeof(de)); //rootinode에 해당 Dir Entry 추가
 
-  bzero(&de, sizeof(de));
+  bzero(&de, sizeof(de)); //위에랑 똑같은데 이번엔 ".." 상위폴더 추가.
   de.inum = xshort(rootino);
   strcpy(de.name, "..");
-  iappend(rootino, &de, sizeof(de));
+  iappend(rootino, &de, sizeof(de)); //이제 여기까지가 root inode만드는거인듯?
 
-  for(i = 2; i < argc; i++){
-    assert(index(argv[i], '/') == 0);
+  for(i = 2; i < argc; i++){ //인자로 들어온건 아마 파일이겠지? 파일 경로인듯. 사실 그게 파일 이름이지ㅇㅇ
+  
+  	assert(index(argv[i], '/') == 0);
 
     if((fd = open(argv[i], 0)) < 0){
       perror(argv[i]);
@@ -142,11 +162,12 @@ main(int argc, char *argv[])
     if(argv[i][0] == '_')
       ++argv[i];
 
-    inum = ialloc(T_FILE);
+		//ialloc---> return inum = free_inum++
+    inum = ialloc(T_FILE); //뭔가 inode하나 생성해서 현재 dinode에 있는거 넣어주는듯.
 
-    bzero(&de, sizeof(de));
-    de.inum = xshort(inum);
-    strncpy(de.name, argv[i], DIRSIZ);
+    bzero(&de, sizeof(de)); //bzero는 하나의 블럭을 0으로 밀어버리는거임.
+    de.inum = xshort(inum); //
+    strncpy(de.name, argv[i], DIRSIZ); //strncpy(DST,SRC,n)  //그냥 파일 이름 지정해주는거같은디. DIRSIZ = 14. 그냥 파일이름 길이임.
     iappend(rootino, &de, sizeof(de));
 
     while((cc = read(fd, buf, sizeof(buf))) > 0)
@@ -160,16 +181,27 @@ main(int argc, char *argv[])
   off = xint(din.size);
   off = ((off/BSIZE) + 1) * BSIZE;
   din.size = xint(off);
-  winode(rootino, &din);
-
-  balloc(freeblock);
-
+  winode(rootino, &din);  //rootino 정보를 din 에 넣어주는듯 
+	
+	
+	
+	freeblock0 = freeblock;
+  
+	for(int i=0; i<FSSIZE; i+=BGSIZE){
+	  
+	  if (i==0) balloc(0,freeblock0,0);
+		//else	balloc(i,i+IBPBG+BBPBG,i/BGSIZE);
+		break;
+	}
+  
   exit(0);
 }
 
 void
 wsect(uint sec, void *buf)
 {
+	// lseek 는 파일을 읽거나 쓸때 위치를 받아내는 함수.
+	// lseek (fd, offset, whence)
   if(lseek(fsfd, sec * BSIZE, 0) != sec * BSIZE){
     perror("lseek");
     exit(1);
@@ -235,19 +267,19 @@ ialloc(ushort type)
 }
 
 void
-balloc(int used)
+balloc(int start, int used, int index)
 {
   uchar buf[BSIZE];
   int i;
 
   printf("balloc: first %d blocks have been allocated\n", used);
-  assert(used < BSIZE*8);
+  assert(used < (index*BGSIZE) + (BSIZE*8));
   bzero(buf, BSIZE);
   for(i = 0; i < used; i++){
     buf[i/8] = buf[i/8] | (0x1 << (i%8));
   }
-  printf("balloc: write bitmap block at sector %d\n", sb.bmapstart);
-  wsect(sb.bmapstart, buf);
+  printf("balloc: write bitmap block at sector %d\n", sb.bmapstart[index]);
+  wsect(sb.bmapstart[index], buf);
 }
 
 #define min(a, b) ((a) < (b) ? (a) : (b))

@@ -25,6 +25,11 @@ int sleep(int);
 int uptime(void);
 int swapread(const char*, int);
 int swapwrite(const char*, int);
+int setnice(int pid, int value);
+int getnice(int pid);
+int ps(int pid);
+int ang(void);
+
 
 // ulib.c
 int stat(const char*, struct stat*);
